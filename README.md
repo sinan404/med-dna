@@ -2,7 +2,10 @@
 
 **Medical Device Command Center: behavioral DNA for connected devices, and signed, tamper-evident readings for temperature-controlled medicine.**
 
-> Simulated devices, sensors, users, and telemetry only. No real devices, networks, or patient data are used.
+
+> Simulated devices, sensors, users, and telemetry only. No real devices, networks, hospital systems, or patient data are used or attacked.
+
+**Contents:** [Project Name](#project-name) · [Team Name](#team-name) · [Selected Track](#selected-track) · [Challenge](#challenge-number--title) · [Problem](#problem-statement) · [Solution](#proposed-solution) · [Features](#key-features) · [Tech Stack](#technology-stack) · [Architecture](#system-architecture) · [Setup](#setupinstallation-steps) · [Usage](#usage-instructions) · [Demo](#demo-instructions) · [Testing](#testingevaluation-results) · [Limitations](#limitations) · [Team](#team-members) · [Third-party](#third-party-components) · [Final version](#final-version-for-judging)
 
 ---
 
@@ -11,16 +14,14 @@
 MED-DNA (Medical Device Command Center)
 
 ## Team Name
-
-[Fill in: team name]
+sablaski
 
 ## Selected Track
+2
 
-[Fill in: track name]
 
 ## Challenge Number & Title
-
-challenge:2. Medical Devices + Cyber-Physical Safety
+Medical Devices + Cyber-Physical Safety
 
 ## Problem Statement
 
@@ -30,7 +31,15 @@ Hospitals depend on two kinds of things that attackers, faults, and mistakes can
 
 **2. Temperature-controlled medicine.** Vaccines, insulin, and blood units must stay within a strict temperature range. If a sensor reading is spoofed or a log is edited, spoiled stock can be given to patients and nobody notices, because the record looks fine.
 
-The cyber risks are behavior drift or compromise of devices, falsified or replayed temperature data, edited logs, and a compromised sensor gateway.
+**Cyber risks addressed**
+
+| Risk | Where it applies |
+| --- | --- |
+| Behavior drift or compromise of a connected device (data exfiltration, command injection, tampered firmware) | Medical devices |
+| Falsified or replayed temperature data | Cold chain sensors |
+| Edited logs | Cold chain ledger and audit trail |
+| A compromised sensor gateway | Cold chain sensors |
+| Unapproved or unaccountable responses | Every consequential action |
 
 ## Proposed Solution
 
@@ -67,6 +76,8 @@ A guiding rule throughout: **risk is not proof of compromise.** The system repor
 | Testing | pytest, httpx `TestClient` |
 | API style | REST, JSON, session token in the `Authorization` header |
 
+**AI/ML:** none. Scoring and detection are rule-based (fixed weights, tolerances, and thresholds). See [AI Use and Human Oversight](#ai-use-and-human-oversight).
+
 ## System Architecture
 
 ```
@@ -85,17 +96,54 @@ A guiding rule throughout: **risk is not proof of compromise.** The system repor
                                                                              └────────────────────────────────────┘
 ```
 
-Key points:
+**Data flow (cold chain).** Each tick, the simulator creates one signed reading per storage unit. The verifier checks the signature, sequence and freshness, plausibility, and temperature range; the reading is appended to the unit's hash-chained ledger; the ledger is re-verified; the unit status is derived; and detections, alerts, and audit events are created. Batches are only ever *recommended* for quarantine. A pharmacist's approved request is the only thing that changes batch state.
+
+**Key points**
 
 - **The backend is the single source of truth.** It owns baselines, telemetry, scores, risk, explanations, signed readings, check results, detections, alerts, roles, and hashes. The frontend contains no scoring, signature, or simulation logic.
-- **A background task** ticks every 2 seconds: it generates device telemetry and one signed reading per storage unit, runs the checks, extends the ledgers, and opens or clears detections.
 - **Two kinds of hash chain:** one global chain for the audit log, and one chain per storage unit for readings.
 - **A single lock** protects every read-modify-write, so ticks and requests never interleave.
-- **Roles are enforced in the backend** on every state-changing endpoint; the UI only reflects them.
 
-Full details are in `MED-DNA_Backend_Specification.md` and `MED-DNA_Frontend_Specification.md`.
+### Security approach
+
+| Control | How it is done |
+| --- | --- |
+| Reading authenticity | HMAC-SHA256 over a canonical payload; constant-time comparison |
+| Replay protection | Strictly increasing sequence numbers plus a timestamp freshness window |
+| Plausibility | Physical range and maximum step change between readings |
+| Tamper evidence | SHA-256 hash chains for readings (per unit) and for the audit log; verification reports the first broken entry |
+| Access control | Four roles, permissions enforced by the backend on every state-changing endpoint; the UI only reflects them |
+| Authentication | Scrypt-hashed passwords with per-user salts, signed session tokens with expiry, lockout after repeated failures |
+| Accountability | Every sign-in, failed sign-in, denied action, state change, and role change is audited with actor and role |
+| Secrets | Keys and secrets are generated at startup or read from environment variables; none are committed (see `.env.example`) |
+
+### Healthcare safety
+
+- All devices, sensors, batches, users, and telemetry are synthetic and generated by the backend.
+- Nothing connects to a real device, hospital system, or network, and nothing scans or attacks any target.
+- **Human approval for consequential actions:** isolation needs a Security Operator or Admin and a two-step confirmation; quarantine and release need a Pharmacist and a two-step confirmation. No action runs automatically.
+- Isolation never changes clinical operation: the response states that clinical operation continues.
+- Responses separate "behavior deviates" or "a reading failed a check" from "compromised". The system never claims proof of tampering.
+
+Full details are in `docs/MED-DNA_Backend_Specification.md` and `docs/MED-DNA_Frontend_Specification.md`.
 
 ## Setup/Installation Steps
+
+### Repository layout
+
+```
+med-dna/
+├── README.md
+├── LICENSE
+├── .gitignore
+├── .env.example
+├── docs/
+│   ├── MED-DNA_Backend_Specification.md
+│   ├── MED-DNA_Frontend_Specification.md
+│   └── screenshots/
+├── backend/            FastAPI service (app/ and tests/)
+└── frontend/           React app (src/ and public/)
+```
 
 ### Prerequisites
 
@@ -105,37 +153,29 @@ Full details are in `MED-DNA_Backend_Specification.md` and `MED-DNA_Frontend_Spe
 ### Backend
 
 ```
-cd med-dna-backend
+cd backend
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install fastapi "uvicorn[standard]" pydantic pytest httpx
+cp ../.env.example .env          # then edit the values; never commit .env
 uvicorn app.main:app --reload --port 8000
 ```
 
-Optional environment variables:
+Environment variables (placeholders are in `.env.example`; real values go only in your local `.env`):
 
 | Variable | Purpose |
 | --- | --- |
 | `ALLOWED_ORIGINS` | Allowed CORS origins (default: `http://localhost:5173`, `http://127.0.0.1:5173`) |
 | `SESSION_SECRET` | Signs session tokens. If unset, one is generated at startup and sessions end on restart. |
-| `SENSOR_KEY_SEED` | Makes sensor keys reproducible (used by tests) |
+| `SENSOR_KEY_SEED` | Optional. Makes simulated sensor keys reproducible (used by tests). |
+| `DEMO_OPERATOR_PASSWORD`, `DEMO_PHARMACIST_PASSWORD`, `DEMO_ADMIN_PASSWORD`, `DEMO_AUDITOR_PASSWORD` | Passwords for the four simulated demo users. Choose your own for each run. |
 
 ### Frontend
 
 ```
-cd med-dna-frontend
+cd frontend
 npm install
-```
-
-Create `.env`:
-
-```
-VITE_API_BASE=http://localhost:8000/api
-```
-
-Start it:
-
-```
+echo "VITE_API_BASE=http://localhost:8000/api" > .env
 npm run dev
 ```
 
@@ -143,7 +183,7 @@ The app opens at `http://localhost:5173`.
 
 ## Usage Instructions
 
-1. Open `http://localhost:5173` and sign in. The login page lists the four simulated demo accounts and can fill the form for you:
+1. Open `http://localhost:5173` and sign in with one of the four simulated demo accounts (passwords are the ones you set in your backend `.env`). The login page lists the usernames and can fill the username field for you:
 
    | Username | Role | Can do |
    | --- | --- | --- |
@@ -152,8 +192,6 @@ The app opens at `http://localhost:5173`.
    | `demo.admin` | Admin | Operator actions plus user and role management |
    | `demo.auditor` | Auditor | Read-only access to everything, including the audit log and users |
 
-   Demo passwords are set in the backend `config.py` (or its environment overrides). They are for the demo only.
-
 2. **Fleet view:** select a device to see its DNA score, attribute tracks, and explanation. Choose a mutation preset and use **Simulate mutation**. Use **Approve isolation** then **Confirm isolation** to respond, and **Reset DNA** to recover.
 3. **Cold Chain view:** select a storage unit to see its temperature chart, the five integrity checks, its batches, and the reading ledger. Use **Simulate attack** and **Reset unit**. As a Pharmacist, use **Approve quarantine** then **Confirm quarantine**, and **Release batch** once the unit is Normal.
 4. **Security Console:** use the tabs for Detections, Alerts, Audit log, and Users and Roles. Filters narrow each table. The audit log shows whether its hash chain verifies.
@@ -161,7 +199,7 @@ The app opens at `http://localhost:5173`.
 
 ## Demo Instructions
 
-A short script that shows the whole story in a few minutes:
+The demo runs entirely on simulated data in a local, controlled environment. A short script that shows the whole story in a few minutes:
 
 1. Sign in as **Demo Operator**. The Fleet view shows four Trusted devices, fleet match about 97%.
 2. Select **Infusion Pump 17**, choose **Combined**, and click **Simulate mutation**. The score falls to about 43 and the status turns Critical, with an explanation of why.
@@ -173,45 +211,90 @@ A short script that shows the whole story in a few minutes:
 8. Open **Security Console**: review detections and alerts, try resolving an alert while its condition is still active, then check the **Audit log** for the denied quarantine and the pharmacist approval.
 9. Sign in as **Demo Admin** to change a role (with confirmation) and view the permissions matrix. Sign in as **Demo Auditor** to see the same pages read-only.
 
+Demo URL (if hosted): [Fill in, or write "Not hosted; run locally"]
+
 ## Testing/Evaluation Results
 
-Run the backend test suite from `med-dna-backend`:
+All tests run locally against simulated data. From `backend/`:
 
 ```
 pytest
 ```
 
-The suite covers the scoring engine, the event hash chain, signing and verification, every cold-chain attack, the ledger, role enforcement, authentication, detections and alerts, and the audit log. Target values from the specifications:
+The suite covers the scoring engine, the event hash chain, signing and verification, every cold-chain attack, the ledger, role enforcement, authentication, detections and alerts, and the audit log.
+
+**Sample input and expected output** (from the specification; replace with your captured output):
+
+```
+POST /api/simulate/infusion-pump-17      {"preset": "combined"}      (jitter disabled)
+-> dna_score 43, risk CRITICAL, status CRITICAL
+   deviations: dest -18.0 points, cmd -12.5 points, pkt ..., resp ..., dur ...
+
+POST /api/coldchain/simulate/vaccine-fridge-01      {"attack": "spoof"}
+-> status INTEGRITY_RISK, signature check "fail", batches QUARANTINE_RECOMMENDED
+
+POST /api/coldchain/actions      {"batch_id": "VAC-2026-0412", "action": "quarantine"}   (as demo.operator)
+-> 403 {"detail": "Your role can't approve quarantine. Ask a pharmacist."}
+```
+
+**Results** (fill in after running; the Target column comes from the specifications, and targets are not results):
 
 | Check | Target | Result |
 | --- | --- | --- |
-| Weights sum to 1.0 | Pass | [Fill in after running] |
-| `combined` on Infusion Pump 17, jitter off | Score 43, CRITICAL | [Fill in after running] |
-| Healthy devices with jitter, 200 samples | All scores between 94 and 100 | [Fill in after running] |
-| Every preset drops its device below 85 | Pass | [Fill in after running] |
-| Healthy units, 100 ticks with noise | NORMAL, no detections, alerts, or events | [Fill in after running] |
-| `spoof`, `replay`, `impossible`, `log_edit` | Each fails a different check | [Fill in after running] |
-| `excursion` | Only the temperature range check fails | [Fill in after running] |
-| Edited ledger entry | Verification fails at that entry | [Fill in after running] |
-| Quarantine as non-pharmacist | 403 and an `access_denied` event | [Fill in after running] |
-| No automatic quarantine after any attack | Pass | [Fill in after running] |
-| Last Admin demotion | 409 | [Fill in after running] |
-| `GET /api/health` after the demo sequence | `chain_valid` and `ledgers_valid` both true | [Fill in after running] |
+| Weights sum to 1.0 | Pass | [Fill in] |
+| `combined` on Infusion Pump 17, jitter off | Score 43, CRITICAL | [Fill in] |
+| Healthy devices with jitter, 200 samples | All scores between 94 and 100 | [Fill in] |
+| Every preset drops its device below 85 | Pass | [Fill in] |
+| Healthy units, 100 ticks with noise | NORMAL, no detections, alerts, or events | [Fill in] |
+| `spoof`, `replay`, `impossible`, `log_edit` | Each fails a different check | [Fill in] |
+| `excursion` | Only the temperature range check fails | [Fill in] |
+| Edited ledger entry | Verification fails at that entry | [Fill in] |
+| Quarantine as non-pharmacist | 403 and an `access_denied` event | [Fill in] |
+| No automatic quarantine after any attack | Pass | [Fill in] |
+| Last Admin demotion | 409 | [Fill in] |
+| `GET /api/health` after the demo sequence | `chain_valid` and `ledgers_valid` both true | [Fill in] |
 
-The frontend is evaluated against the acceptance criteria FE-01 to FE-25 in the Frontend Specification, and the backend against BE-01 to BE-21 in the Backend Specification. [Fill in: overall pass count and date tested.]
+The frontend is evaluated against acceptance criteria FE-01 to FE-25 and the backend against BE-01 to BE-21 in the specifications in `docs/`. [Fill in: overall pass count and date tested.]
+
+**Screenshots and logs:** [Fill in: add images to `docs/screenshots/` and link them here, for example the Fleet view after a mutation, a failing check panel, the broken-ledger view, and the audit log.]
 
 ## Limitations
 
 - **Everything is simulated.** No real devices, sensors, networks, patient data, or credentials. Scores and readings come from a generator, not from hospital systems.
 - **Shared-secret signing.** HMAC-SHA256 uses one secret per sensor, and in this prototype the backend plays both the sensor and the verifier. A real deployment would use asymmetric signatures such as Ed25519, key rotation, and hardware-backed keys.
 - **Rule-based detection.** Scoring and checks use fixed weights and thresholds, with no machine learning and no adaptive baselines.
-- **Detection gaps.** Flatline detection and per-product excursion limits based on time above threshold are not included.
+- **Possible false positives and false negatives.** A legitimate change (a configuration update, a busy period, a door left open) can lower a score or cause an excursion alert. A slow, small, or well-crafted change can stay inside the tolerances and go unflagged. Flatline detection and per-product excursion limits based on time above threshold are not included.
 - **Demo authentication.** Seeded users, simple sign-in with session tokens, and brute-force lockout only. No external identity provider, multi-factor sign-in, or persistent sessions.
 - **In-memory storage.** All data resets when the backend restarts. Each unit ledger keeps its latest 1,000 readings.
 - **Polling, not push.** The frontend refreshes every 2 seconds instead of using WebSockets.
 - **Single process.** One backend instance with one lock; not designed for horizontal scaling.
 - **Risk, not verdict.** The system can say a reading failed a check or behavior differs from baseline. It cannot prove tampering or compromise, and it does not replace clinical, pharmacy, or security judgment.
 
-## License
+### AI Use and Human Oversight
 
-This project is licensed under the BSD 3-Clause License.
+This project does **not** use AI or machine learning in the product. Scores, checks, and detections are deterministic rules. Output is a risk indication to support a human decision, not a guaranteed clinical or security decision, and every consequential action (isolation, quarantine, release, role change) needs an authorized person's approval. Claude (an AI assistant) was used while writing the specifications and documentation. [Fill in: describe any other AI assistance, and have the team review all AI-assisted text and code.]
+
+## Team Members
+
+| Member | Role and contributions |
+| --- | --- |
+| [Fill in: name] | [Fill in: for example, Backend and Security] |
+| [Fill in: name] | [Fill in: for example, Frontend] |
+| [Fill in: name] | [Fill in: for example, Research and Documentation] |
+
+## Third-Party Components
+
+No external APIs, hosted AI models, or datasets are used. All data is synthetic and generated by the project.
+
+| Component | Use | License (verify before submitting) |
+| --- | --- | --- |
+| FastAPI | Backend web framework | MIT |
+| Pydantic | Request and response models | MIT |
+| Uvicorn | ASGI server | BSD-3-Clause |
+| pytest | Backend tests | MIT |
+| httpx | Test client | BSD-3-Clause |
+| React and React DOM | Frontend UI | MIT |
+| Vite | Frontend build and dev server | MIT |
+| React Router | Frontend routing | MIT |
+| Lucide | Icons | ISC |
+| Python standard library (`hmac`, `hashlib`, `secrets`) | Signing, hashing, key generation | PSF License |
