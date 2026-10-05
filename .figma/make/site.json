@@ -1,0 +1,10 @@
+{
+  "description": "Effortlessly transform documents into interactive web applications, enabling users to share, collaborate, and access information seamlessly.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
